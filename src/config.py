@@ -23,6 +23,9 @@ class Config:
     FETCH_INTERVAL_SECONDS = int(os.getenv("FETCH_INTERVAL_SECONDS", "300"))
     QUERY_KEYWORDS = os.getenv("QUERY_KEYWORDS", "technology").split(",")
     ARTICLES_PER_REQUEST = int(os.getenv("ARTICLES_PER_REQUEST", "100"))
+    # Optional initial import of existing records from Kinesis for deduplication
+    INITIAL_LOAD_KINESIS = os.getenv("INITIAL_LOAD_KINESIS", "false").lower() == "true"
+    INITIAL_LOAD_KINESIS_LIMIT = int(os.getenv("INITIAL_LOAD_KINESIS_LIMIT", "1000"))
     
     @classmethod
     def validate(cls):

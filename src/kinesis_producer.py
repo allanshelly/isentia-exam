@@ -4,6 +4,9 @@ import json
 from typing import Dict, List
 import boto3
 from botocore.exceptions import ClientError
+from src.retry_handler import RetryHandler, RetryConfig
+from src.circuit_breaker import CircuitBreaker
+from src.exceptions import KinesisError
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,24 @@ class KinesisProducer:
         else:
             self.client = boto3.client('kinesis', region_name=region_name)
         
+        # Initialize circuit breaker
+        self.circuit_breaker = CircuitBreaker(
+            name="Kinesis",
+            failure_threshold=10,
+            recovery_timeout=120
+        )
+        
+        # Initialize retry handler
+        retry_config = RetryConfig(
+            max_attempts=3,
+            initial_delay=0.5,
+            max_delay=5.0
+        )
+        self.retry_handler = RetryHandler(
+            retryable_exceptions=(ClientError,),
+            config=retry_config
+        )
+        
         logger.info(f"Initialized Kinesis producer for stream: {stream_name}")
     
     def put_record(self, data: Dict, partition_key: str) -> bool:
@@ -54,11 +75,18 @@ class KinesisProducer:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            response = self.client.put_record(
+        def _put():
+            return self.client.put_record(
                 StreamName=self.stream_name,
                 Data=json.dumps(data),
                 PartitionKey=partition_key
+            )
+        
+        try:
+            response = self.circuit_breaker.call(
+                self.retry_handler.execute,
+                _put,
+                operation_name=f"Put record: {partition_key}"
             )
             
             logger.debug(f"Record sent to Kinesis. Sequence: {response.get('SequenceNumber')}")
@@ -68,13 +96,15 @@ class KinesisProducer:
             error_code = e.response['Error']['Code']
             if error_code == 'ResourceNotFoundException':
                 logger.error(f"Stream not found: {self.stream_name}")
+                raise KinesisError(f"Stream not found: {self.stream_name}") from e
             elif error_code == 'ProvisionedThroughputExceededException':
                 logger.error("Provisioned throughput exceeded")
+                raise KinesisError("Provisioned throughput exceeded") from e
             else:
                 logger.error(f"Client error: {str(e)}")
-            return False
+                raise KinesisError(f"Kinesis client error: {str(e)}") from e
         except Exception as e:
-            logger.error(f"Unexpected error putting record to Kinesis: {str(e)}", exc_info=True)
+            logger.error(f"Failed to put record to Kinesis: {str(e)}", exc_info=True)
             return False
     
     def put_batch(self, records: List[Dict]) -> int:
@@ -126,3 +156,49 @@ class KinesisProducer:
         except Exception as e:
             logger.error(f"Unexpected error checking stream: {str(e)}", exc_info=True)
             return False
+    
+    def get_existing_article_ids(self, limit: int = 1000) -> set:
+        """
+        Scan the Kinesis stream and collect article_id values from records.
+        This method reads from TRIM_HORIZON and stops once `limit` ids have
+        been gathered or the stream is exhausted.  Useful for bootstrapping
+        the deduplication state.
+        
+        Args:
+            limit: maximum number of article_ids to return
+        
+        Returns:
+            A set of article_id strings
+        """
+        ids = set()
+        try:
+            desc = self.client.describe_stream(StreamName=self.stream_name)
+            shards = desc['StreamDescription']['Shards']
+            for shard in shards:
+                if len(ids) >= limit:
+                    break
+                shard_id = shard['ShardId']
+                iterator = self.client.get_shard_iterator(
+                    StreamName=self.stream_name,
+                    ShardId=shard_id,
+                    ShardIteratorType='TRIM_HORIZON'
+                )['ShardIterator']
+                while iterator and len(ids) < limit:
+                    resp = self.client.get_records(ShardIterator=iterator, Limit=100)
+                    for rec in resp.get('Records', []):
+                        try:
+                            payload = json.loads(rec['Data'])
+                            aid = payload.get('article_id')
+                            if aid:
+                                ids.add(aid)
+                                if len(ids) >= limit:
+                                    break
+                        except Exception:
+                            continue
+                    iterator = resp.get('NextShardIterator')
+                    if not iterator:
+                        break
+            logger.info(f"Imported {len(ids)} existing ids from kinesis stream")
+        except Exception as e:
+            logger.error(f"Error scanning kinesis for existing ids: {str(e)}", exc_info=True)
+        return ids

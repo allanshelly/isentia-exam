@@ -3,6 +3,9 @@ import logging
 from typing import Dict, List, Optional
 import requests
 from src.config import Config
+from src.circuit_breaker import CircuitBreaker
+from src.retry_handler import RetryHandler, RetryConfig
+from src.exceptions import RateLimitError, AuthenticationError, APIError
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,28 @@ class NewsFetcher:
         self.headers = {
             'User-Agent': 'News-Ingest-Pipeline/1.0'
         }
+        
+        # Initialize circuit breaker
+        self.circuit_breaker = CircuitBreaker(
+            name="NewsAPI",
+            failure_threshold=5,
+            recovery_timeout=60
+        )
+        
+        # Initialize retry handler
+        retry_config = RetryConfig(
+            max_attempts=3,
+            initial_delay=1.0,
+            max_delay=10.0
+        )
+        self.retry_handler = RetryHandler(
+            retryable_exceptions=(
+                requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                RateLimitError
+            ),
+            config=retry_config
+        )
     
     def fetch_everything(
         self,
@@ -43,17 +68,17 @@ class NewsFetcher:
         Returns:
             API response dict or None if request fails
         """
-        endpoint = f"{self.base_url}/everything"
-        
-        params = {
-            'q': q,
-            'sortBy': sort_by,
-            'language': language,
-            'pageSize': min(page_size, 100),  # NewsAPI max is 100
-            'apiKey': self.api_key
-        }
-        
-        try:
+        def _fetch():
+            endpoint = f"{self.base_url}/everything"
+            
+            params = {
+                'q': q,
+                'sortBy': sort_by,
+                'language': language,
+                'pageSize': min(page_size, 100),  # NewsAPI max is 100
+                'apiKey': self.api_key
+            }
+            
             logger.info(f"Fetching articles for query: {q}")
             response = requests.get(
                 endpoint,
@@ -66,28 +91,28 @@ class NewsFetcher:
             data = response.json()
             
             if data.get('status') != 'ok':
+                error_message = data.get('message', 'Unknown error')
                 logger.error(f"API returned non-ok status: {data.get('status')}")
-                logger.error(f"API message: {data.get('message')}")
-                return None
+                logger.error(f"API message: {error_message}")
+                
+                if 'rate limit' in error_message.lower():
+                    raise RateLimitError(f"Rate limit exceeded: {error_message}")
+                elif 'unauthorized' in error_message.lower():
+                    raise AuthenticationError(f"Authentication failed: {error_message}")
+                else:
+                    raise APIError(f"API error: {error_message}")
             
             logger.info(f"Successfully fetched {len(data.get('articles', []))} articles")
             return data
-            
-        except requests.exceptions.Timeout:
-            logger.error("Request timeout while fetching articles")
-            return None
-        except requests.exceptions.ConnectionError:
-            logger.error("Connection error while fetching articles")
-            return None
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code}")
-            if e.response.status_code == 401:
-                logger.error("Invalid API key")
-            elif e.response.status_code == 429:
-                logger.error("Rate limit exceeded")
-            return None
+        
+        try:
+            return self.circuit_breaker.call(
+                self.retry_handler.execute,
+                _fetch,
+                operation_name=f"Fetch articles: {q}"
+            )
         except Exception as e:
-            logger.error(f"Unexpected error fetching articles: {str(e)}", exc_info=True)
+            logger.error(f"Failed to fetch articles: {str(e)}", exc_info=True)
             return None
     
     def fetch_articles(
