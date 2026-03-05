@@ -90,15 +90,15 @@ at a minimum the following:
 ### Docker Usage
 - Build the image:
   ```bash
-  docker build -t news-ingest-pipeline .
+  docker build -t isentia-exam .
   ```
 - Run the container:
   ```bash
-  docker run --env-file .env news-ingest-pipeline
+  docker run --env-file .env isentia-exam
   ```
 - Optionally execute tests inside the container:
   ```bash
-  docker run --rm -v ${PWD}:/app -w /app news-ingest-pipeline \
+  docker run --rm -v ${PWD}:/app -w /app isentia-exam \
       python -m unittest discover -v
   ```
 
