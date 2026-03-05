@@ -1,6 +1,6 @@
 ## News Ingest Pipeline
 
-#Overview
+# Overview
 
 This challenge will showcase the candidate&#39;s ability to integrate external APIs, manage
 dependencies, utilise cloud services (AWS Kinesis), and containerise an application using
