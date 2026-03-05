@@ -24,26 +24,26 @@ stream, therefore the system should regularly pull content from the API and opti
 latency when delivering to clients.  
 
 # Core Requirements  
-1. API Integration: Fetch news data from the public Everything API from NewsAPI.
-2. Data Processing: Structure and validate the retrieved data.
-3. Kinesis Integration: Write the processed data to a configured AWS Kinesis Data Stream.
-4. Containerization: Package the application and its dependencies using Docker.
+   1. API Integration: Fetch news data from the public Everything API from NewsAPI.
+   2. Data Processing: Structure and validate the retrieved data.
+   3. Kinesis Integration: Write the processed data to a configured AWS Kinesis Data Stream.
+   4. Containerization: Package the application and its dependencies using Docker.
    
 # Technical Requirements
 The ingested article data written to Kinesis should be a JSON object containing at least the
 following fields (after being extracted and cleaned from the API response):  
-● article_id (Unique identifier)  
-● source_name  
-● title  
-● content  
-● Url  
-● author  
-● published_at  
-● ingested_at  
+   ● article_id (Unique identifier)  
+   ● source_name  
+   ● title  
+   ● content  
+   ● Url  
+   ● author  
+   ● published_at  
+   ● ingested_at  
 
 # Deliverables
 The candidate should submit the URL of a public Git repository (e.g., GitHub, GitLab) containing
 at a minimum the following:
-1. Python code - The main application logic
-2. Dockerfile - An executable Docker container
-3. README.md
+   1. Python code - The main application logic
+   2. Dockerfile - An executable Docker container
+   3. README.md
